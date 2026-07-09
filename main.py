@@ -1201,15 +1201,8 @@ class XiaomiAuto:
         except:
             pass
     
-    def use_invite_code(self, code):
-        """Click 'Enter invite code +$2' and redeem a code from another account"""
-        if not code:
-            return False
-        
-        log(f"Using invite code: {code}")
-        time.sleep(1)
-        
-        # Click "Enter invite code +$2" button
+    def _open_invite_modal(self):
+        """Open the invite code modal - call once before entering multiple codes"""
         try:
             buttons = self.driver.find_elements(By.TAG_NAME, "button")
             for btn in buttons:
@@ -1217,14 +1210,15 @@ class XiaomiAuto:
                     text = btn.text.lower()
                     if 'enter invite' in text or 'invite code' in text:
                         self.driver.execute_script("arguments[0].click();", btn)
-                        log("Enter invite code clicked!")
+                        log("Enter invite code modal opened!")
                         time.sleep(1.5)
-                        break
+                        return True
         except Exception as e:
-            log(f"Click enter invite error: {e}")
-            return False
-        
-        # Enter code in the 6 input boxes
+            log(f"Open invite modal error: {e}")
+        return False
+    
+    def _enter_code_in_modal(self, code):
+        """Enter a code in the invite modal"""
         try:
             inputs = self.driver.find_elements(By.CSS_SELECTOR, "input[maxlength='1']")
             if not inputs:
@@ -1235,24 +1229,29 @@ class XiaomiAuto:
             if len(visible_inputs) >= 6:
                 for i, char in enumerate(code[:6]):
                     visible_inputs[i].click()
+                    visible_inputs[i].send_keys(Keys.CONTROL + "a")
+                    visible_inputs[i].send_keys(Keys.DELETE)
+                    time.sleep(0.03)
                     visible_inputs[i].send_keys(char)
                     time.sleep(0.05)
                 log(f"Code entered: {code}")
+                return True
             else:
                 for inp in visible_inputs:
                     placeholder = inp.get_attribute("placeholder") or ""
                     if 'code' in placeholder.lower() or 'invite' in placeholder.lower() or len(visible_inputs) == 1:
                         inp.click()
+                        inp.send_keys(Keys.CONTROL + "a")
+                        inp.send_keys(Keys.DELETE)
                         self.human_type(inp, code)
-                        log(f"Code entered in single input: {code}")
-                        break
+                        log(f"Code entered: {code}")
+                        return True
         except Exception as e:
             log(f"Enter code error: {e}")
-            return False
-        
-        time.sleep(0.5)
-        
-        # Click "Redeem & get $2 credits →"
+        return False
+    
+    def _click_redeem(self):
+        """Click redeem button"""
         try:
             buttons = self.driver.find_elements(By.TAG_NAME, "button")
             for btn in buttons:
@@ -1262,22 +1261,69 @@ class XiaomiAuto:
                         self.driver.execute_script("arguments[0].click();", btn)
                         log("Redeem clicked!")
                         time.sleep(1.5)
-                        
-                        # Check for success
-                        body_text = self.driver.find_element(By.TAG_NAME, "body").text
-                        if 'success' in body_text.lower() or '$2' in body_text:
-                            log("Redeem successful!")
-                            self._close_refer_modal()
-                            return True
-                        else:
-                            log("Redeem may have failed")
-                            self._close_refer_modal()
-                            return True  # Continue anyway
+                        return True
         except Exception as e:
             log(f"Redeem click error: {e}")
-        
-        self._close_refer_modal()
         return False
+    
+    def _is_code_found_error(self):
+        """Check if 'invitation code not found' error appears"""
+        try:
+            body = self.driver.find_element(By.TAG_NAME, "body").text
+            if 'not found' in body.lower():
+                return True
+        except:
+            pass
+        return False
+    
+    def _is_success(self):
+        """Check if redeem was successful"""
+        try:
+            body = self.driver.find_element(By.TAG_NAME, "body").text
+            if 'success' in body.lower() or 'redeemed' in body.lower():
+                return True
+        except:
+            pass
+        return False
+    
+    def use_invite_codes_batch(self, codes, own_code=None):
+        """Redeem multiple codes - close modal after each to avoid stale React state"""
+        if not codes:
+            return 0
+        
+        valid_codes = [c for c in codes if c and c != own_code]
+        if not valid_codes:
+            return 0
+        
+        redeemed = 0
+        
+        for code in valid_codes:
+            log(f"Trying invite code: {code}")
+            
+            # Open modal
+            if not self._open_invite_modal():
+                log("Failed to open invite modal")
+                continue
+            
+            # Enter code
+            if self._enter_code_in_modal(code):
+                time.sleep(0.3)
+                
+                # Click redeem
+                if self._click_redeem():
+                    if self._is_success():
+                        redeemed += 1
+                        log(f"Redeem successful! ({redeemed}/{len(valid_codes)})")
+                    elif self._is_code_found_error():
+                        log("Code not found, skipping...")
+                    else:
+                        log("Unknown result, continuing...")
+                
+            # Close modal after each code to reset React state
+            self._close_refer_modal()
+            time.sleep(0.3)
+        
+        return redeemed
     
     def use_referral_code(self, code):
         """Use referral code on registration page"""
@@ -1462,13 +1508,7 @@ class XiaomiAuto:
                 t = timer_start()
                 log("Step 11: Using ALL invite codes...")
                 all_referral_codes = self.get_all_referral_codes()
-                redeemed = 0
-                for ref_code in all_referral_codes:
-                    if ref_code != new_referral:
-                        log(f"Trying invite code: {ref_code}")
-                        if self.use_invite_code(ref_code):
-                            redeemed += 1
-                            log(f"Redeemed {redeemed}/{len(all_referral_codes)}")
+                redeemed = self.use_invite_codes_batch(all_referral_codes, new_referral)
                 log(f"Total redeemed: {redeemed} codes")
                 timer_end(t, "Use invite codes")
                 
