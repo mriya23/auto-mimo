@@ -218,7 +218,7 @@ class XiaomiAuto:
         except:
             pass
         
-        self.driver.save_screenshot("screenshots/xiaomi_filled.png")
+        self.driver.save_screenshot("xiaomi_filled.png")
         log("Form filled!")
     
     def click_next(self):
@@ -478,7 +478,7 @@ class XiaomiAuto:
     def enter_code(self, code):
         log(f"Entering code: {code}")
         time.sleep(2)
-        self.driver.save_screenshot("screenshots/xiaomi_verify.png")
+        self.driver.save_screenshot("xiaomi_verify.png")
         
         all_inputs = self.driver.find_elements(By.TAG_NAME, "input")
         for inp in all_inputs:
@@ -536,10 +536,10 @@ class XiaomiAuto:
             "sessionStorage": ss,
         }
         
-        with open("data/xiaomi_session.json", "w") as f:
+        with open("xiaomi_session.json", "w") as f:
             json.dump(session, f, indent=2, default=str)
         
-        log("Session saved: data/xiaomi_session.json")
+        log("Session saved: xiaomi_session.json")
         print("\n" + "="*60)
         print(" SESSION TOKENS EXTRACTED!")
         print("="*60)
@@ -634,7 +634,7 @@ class XiaomiAuto:
                 time.sleep(0.5)
             else:
                 log("Could not find name input!")
-                self.driver.save_screenshot("screenshots/api_key_input_debug.png")
+                self.driver.save_screenshot("api_key_input_debug.png")
                 return None
         except Exception as e:
             log(f"Name input error: {e}")
@@ -706,7 +706,7 @@ class XiaomiAuto:
                 log(f"API Key: {api_key[:30]}...")
                 return api_key
             else:
-                self.driver.save_screenshot("screenshots/api_key_debug.png")
+                self.driver.save_screenshot("api_key_debug.png")
                 log("Could not find API key - saved debug screenshot")
                 return None
                 
@@ -797,7 +797,7 @@ class XiaomiAuto:
                         "password": self.password,
                         "api_key": api_key
                     }
-                    with open("data/xiaomi_api_keys.json", "a") as f:
+                    with open("xiaomi_api_keys.json", "a") as f:
                         json.dump(result, f, indent=2)
                         f.write("\n")
                     
@@ -819,7 +819,7 @@ class XiaomiAuto:
             import traceback
             traceback.print_exc()
             try:
-                self.driver.save_screenshot("screenshots/error.png")
+                self.driver.save_screenshot("error.png")
             except:
                 pass
             return False
@@ -866,7 +866,7 @@ class XiaomiAuto:
         
         # Tampilkan semua API keys
         try:
-            with open("data/xiaomi_api_keys.json", "r") as f:
+            with open("xiaomi_api_keys.json", "r") as f:
                 keys = f.read()
             print("\nSaved API Keys:")
             print(keys)
