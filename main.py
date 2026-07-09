@@ -192,6 +192,13 @@ class XiaomiAuto:
         except:
             pass
     
+    def human_type(self, element, text):
+        """Type like a human - one by one with small delays"""
+        element.clear()
+        for char in text:
+            element.send_keys(char)
+            time.sleep(random.uniform(0.03, 0.1))  # 30-100ms per char
+    
     def fill_form(self, referral_code=None):
         log("Opening Xiaomi registration...")
         self.driver.get(XIAOMI_URL)
@@ -201,38 +208,49 @@ class XiaomiAuto:
         self.password = gen_password()
         log(f"Password: {self.password}")
         
+        # Type email like human
         email_input = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='email']")))
-        email_input.clear()
-        email_input.send_keys(self.temp_email)
+        self.driver.execute_script("arguments[0].click();", email_input)
+        time.sleep(0.3)
+        self.human_type(email_input, self.temp_email)
         time.sleep(0.5)
         
+        # Tab to password, type like human
+        email_input.send_keys(Keys.TAB)
+        time.sleep(0.3)
         pass_input = self.driver.find_element(By.CSS_SELECTOR, "input[name='password']")
-        pass_input.clear()
-        pass_input.send_keys(self.password)
+        self.driver.execute_script("arguments[0].click();", pass_input)
+        time.sleep(0.2)
+        self.human_type(pass_input, self.password)
         time.sleep(0.5)
         
+        # Tab to confirm password, type like human
+        pass_input.send_keys(Keys.TAB)
+        time.sleep(0.3)
         confirm_input = self.driver.find_element(By.CSS_SELECTOR, "input[name='repassword']")
-        confirm_input.clear()
-        confirm_input.send_keys(self.password)
+        self.driver.execute_script("arguments[0].click();", confirm_input)
+        time.sleep(0.2)
+        self.human_type(confirm_input, self.password)
         time.sleep(0.5)
         
         # Enter referral code if provided
         if referral_code:
             try:
-                # Look for referral input field
                 inputs = self.driver.find_elements(By.TAG_NAME, "input")
                 for inp in inputs:
                     if inp.is_displayed():
                         placeholder = inp.get_attribute("placeholder") or ""
                         name = inp.get_attribute("name") or ""
                         if any(w in placeholder.lower() for w in ['referral', 'refer', 'code', 'invite']):
-                            inp.clear()
-                            inp.send_keys(referral_code)
+                            self.driver.execute_script("arguments[0].click();", inp)
+                            time.sleep(0.3)
+                            self.human_type(inp, referral_code)
                             log(f"Referral code entered: {referral_code}")
                             break
                         elif any(w in name.lower() for w in ['referral', 'refer', 'code', 'invite']):
-                            inp.clear()
-                            inp.send_keys(referral_code)
+                            self.driver.execute_script("arguments[0].click();", inp)
+                            time.sleep(0.3)
+                            self.human_type(inp, referral_code)
                             log(f"Referral code entered: {referral_code}")
                             break
             except Exception as e:
@@ -1137,25 +1155,26 @@ class XiaomiAuto:
             # Find all input boxes in the redeem modal
             inputs = self.driver.find_elements(By.CSS_SELECTOR, "input[maxlength='1']")
             if not inputs:
-                # Try finding inputs by other selectors
                 inputs = self.driver.find_elements(By.CSS_SELECTOR, "input[type='text']")
             
             visible_inputs = [inp for inp in inputs if inp.is_displayed()]
             
             if len(visible_inputs) >= 6:
-                # Enter each character into each input box
+                # Enter each character into each input box like human
                 for i, char in enumerate(code[:6]):
                     visible_inputs[i].click()
+                    time.sleep(0.1)
                     visible_inputs[i].send_keys(char)
-                    time.sleep(0.2)
+                    time.sleep(random.uniform(0.1, 0.3))  # Random delay
                 log(f"Code entered: {code}")
             else:
                 # Try single input field approach
                 for inp in visible_inputs:
                     placeholder = inp.get_attribute("placeholder") or ""
                     if 'code' in placeholder.lower() or 'invite' in placeholder.lower() or len(visible_inputs) == 1:
-                        inp.clear()
-                        inp.send_keys(code)
+                        inp.click()
+                        time.sleep(0.3)
+                        self.human_type(inp, code)
                         log(f"Code entered in single input: {code}")
                         break
         except Exception as e:
@@ -1460,14 +1479,9 @@ class XiaomiAuto:
             
             # Delay between accounts to avoid rate limiting
             if i < count - 1:
-                delay = random.randint(10, 20)
+                delay = random.randint(30, 60)
                 log(f"Waiting {delay}s before next account...")
                 time.sleep(delay)
-            
-            # Tunggu sebentar sebelum account berikutnya
-            if i < count - 1:
-                log("Waiting 3s before next account...")
-                time.sleep(3)
         
         print("\n" + "="*60)
         print(f" ALL DONE! {success} success, {failed} failed")
