@@ -514,9 +514,172 @@ class XiaomiAuto:
         print(f" Full data: xiaomi_session.json")
         print("="*60)
     
+    def accept_terms(self):
+        """Accept Terms & Agreements on MiMo platform"""
+        log("Navigating to MiMo platform...")
+        self.driver.get("https://platform.xiaomimimo.com/")
+        time.sleep(8)
+        
+        # Cek apakah ada Terms & Agreements popup
+        try:
+            # Cari checkbox "I agree" - pakai class ant-checkbox-input
+            checkbox = self.wait.until(EC.presence_of_element_located(
+                (By.CSS_SELECTOR, "input.ant-checkbox-input[type='checkbox']")
+            ))
+            
+            if checkbox and not checkbox.is_selected():
+                self.driver.execute_script("arguments[0].click();", checkbox)
+                log("Terms checkbox clicked!")
+                time.sleep(2)
+            
+            # Klik Confirm button
+            buttons = self.driver.find_elements(By.TAG_NAME, "button")
+            for btn in buttons:
+                if btn.is_displayed():
+                    text = btn.text.lower()
+                    if 'confirm' in text:
+                        self.driver.execute_script("arguments[0].click();", btn)
+                        log("Confirm clicked!")
+                        time.sleep(5)
+                        return True
+        except Exception as e:
+            log(f"Terms accept error: {e}")
+        
+        return False
+    
+    def create_api_key(self):
+        """Create API key on MiMo platform"""
+        log("Navigating to API Keys page...")
+        self.driver.get("https://platform.xiaomimimo.com/console/api-keys")
+        time.sleep(5)
+        
+        # Click "Create API Key" button
+        try:
+            buttons = self.driver.find_elements(By.TAG_NAME, "button")
+            for btn in buttons:
+                if btn.is_displayed():
+                    text = btn.text.lower()
+                    if 'create' in text and 'api' in text:
+                        self.driver.execute_script("arguments[0].click();", btn)
+                        log("Create API Key clicked!")
+                        time.sleep(3)
+                        break
+        except Exception as e:
+            log(f"Create button error: {e}")
+            return None
+        
+        # Enter API key name
+        try:
+            # Try multiple selectors
+            name_input = None
+            for sel in ["input[placeholder='Please enter']", "input[placeholder*='enter']", "input[placeholder*='name']", "input[type='text']"]:
+                try:
+                    name_input = self.driver.find_element(By.CSS_SELECTOR, sel)
+                    if name_input.is_displayed():
+                        break
+                    name_input = None
+                except:
+                    continue
+            
+            if not name_input:
+                # Fallback: find any visible input
+                inputs = self.driver.find_elements(By.TAG_NAME, "input")
+                for inp in inputs:
+                    if inp.is_displayed() and inp.is_enabled():
+                        name_input = inp
+                        break
+            
+            if name_input:
+                api_key_name = f"key_{random.randint(1000, 9999)}"
+                name_input.clear()
+                name_input.send_keys(api_key_name)
+                log(f"API key name: {api_key_name}")
+                time.sleep(1)
+            else:
+                log("Could not find name input!")
+                self.driver.save_screenshot("api_key_input_debug.png")
+                return None
+        except Exception as e:
+            log(f"Name input error: {e}")
+            return None
+        
+        # Click Confirm
+        try:
+            buttons = self.driver.find_elements(By.TAG_NAME, "button")
+            for btn in buttons:
+                if btn.is_displayed():
+                    text = btn.text.lower()
+                    if 'confirm' in text:
+                        self.driver.execute_script("arguments[0].click();", btn)
+                        log("Confirm clicked!")
+                        time.sleep(5)
+                        break
+        except Exception as e:
+            log(f"Confirm error: {e}")
+            return None
+        
+        # Copy API key
+        try:
+            # Wait for API key to appear
+            time.sleep(3)
+            
+            api_key = None
+            
+            # Method 1: Look for input with sk- pattern
+            inputs = self.driver.find_elements(By.CSS_SELECTOR, "input")
+            for inp in inputs:
+                try:
+                    val = inp.get_attribute("value") or ""
+                    if val.startswith("sk-"):
+                        api_key = val
+                        break
+                except:
+                    continue
+            
+            # Method 2: Look for text elements with sk- pattern
+            if not api_key:
+                elements = self.driver.find_elements(By.XPATH, "//*[contains(text(), 'sk-')]")
+                for el in elements:
+                    text = el.text or ""
+                    if text.startswith("sk-") and len(text) > 20:
+                        api_key = text
+                        break
+            
+            # Method 3: Look for copy button and get from nearby elements
+            if not api_key:
+                buttons = self.driver.find_elements(By.TAG_NAME, "button")
+                for btn in buttons:
+                    if btn.is_displayed():
+                        text = btn.text.lower()
+                        if 'copy' in text:
+                            # Try to find API key in modal/dialog
+                            modals = self.driver.find_elements(By.CSS_SELECTOR, "[role='dialog'], .ant-modal, .modal")
+                            for modal in modals:
+                                modal_text = modal.text
+                                if 'sk-' in modal_text:
+                                    import re
+                                    match = re.search(r'(sk-[a-zA-Z0-9]+)', modal_text)
+                                    if match:
+                                        api_key = match.group(1)
+                                        break
+                            if api_key:
+                                break
+            
+            if api_key:
+                log(f"API Key: {api_key[:30]}...")
+                return api_key
+            else:
+                self.driver.save_screenshot("api_key_debug.png")
+                log("Could not find API key - saved debug screenshot")
+                return None
+                
+        except Exception as e:
+            log(f"Copy error: {e}")
+            return None
+    
     def run(self):
         print("\n" + "="*60)
-        print(" XIAOMI REG + SESSION TOKEN EXTRACTOR")
+        print(" XIAOMI REG + SESSION TOKEN + API KEY")
         print("="*60 + "\n")
         
         try:
@@ -560,6 +723,33 @@ class XiaomiAuto:
                 
                 # Step 7: Extract session tokens
                 self.extract_session()
+                
+                # Step 8: Accept Terms on MiMo platform
+                log("Step 8: Accepting Terms...")
+                self.accept_terms()
+                
+                # Step 9: Create API Key
+                log("Step 9: Creating API Key...")
+                api_key = self.create_api_key()
+                
+                if api_key:
+                    # Save API key
+                    result = {
+                        "email": self.temp_email,
+                        "password": self.password,
+                        "api_key": api_key
+                    }
+                    with open("xiaomi_api_keys.json", "a") as f:
+                        json.dump(result, f, indent=2)
+                        f.write("\n")
+                    
+                    print("\n" + "="*60)
+                    print(" API KEY CREATED!")
+                    print("="*60)
+                    print(f" Email: {self.temp_email}")
+                    print(f" Password: {self.password}")
+                    print(f" API Key: {api_key}")
+                    print("="*60)
             
             creds = {"email": self.temp_email, "password": self.password}
             with open("xiaomi_credentials.json", "w") as f:
