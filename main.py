@@ -11,12 +11,16 @@ import requests
 import whisper
 import tempfile
 import subprocess
+from io import BytesIO
+from PIL import Image
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+
+TESSERACT_CMD = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 XIAOMI_URL = "https://global.account.xiaomi.com/fe/service/register?_locale=en_US&_uRegion=US"
 MAIL_API = "https://api.tempmail.lol/v2"
@@ -187,7 +191,7 @@ class XiaomiAuto:
         except:
             pass
     
-    def fill_form(self):
+    def fill_form(self, referral_code=None):
         log("Opening Xiaomi registration...")
         self.driver.get(XIAOMI_URL)
         self.wait_for_page(8)
@@ -211,6 +215,28 @@ class XiaomiAuto:
         confirm_input.send_keys(self.password)
         time.sleep(0.5)
         
+        # Enter referral code if provided
+        if referral_code:
+            try:
+                # Look for referral input field
+                inputs = self.driver.find_elements(By.TAG_NAME, "input")
+                for inp in inputs:
+                    if inp.is_displayed():
+                        placeholder = inp.get_attribute("placeholder") or ""
+                        name = inp.get_attribute("name") or ""
+                        if any(w in placeholder.lower() for w in ['referral', 'refer', 'code', 'invite']):
+                            inp.clear()
+                            inp.send_keys(referral_code)
+                            log(f"Referral code entered: {referral_code}")
+                            break
+                        elif any(w in name.lower() for w in ['referral', 'refer', 'code', 'invite']):
+                            inp.clear()
+                            inp.send_keys(referral_code)
+                            log(f"Referral code entered: {referral_code}")
+                            break
+            except Exception as e:
+                log(f"Referral input error: {e}")
+        
         try:
             checkbox = self.driver.find_element(By.CSS_SELECTOR, "input[type='checkbox']")
             if not checkbox.is_selected():
@@ -230,7 +256,36 @@ class XiaomiAuto:
                     self.driver.execute_script("arguments[0].click();", btn)
                     log("Next clicked!")
                     self.wait_for_page(5)
+                    time.sleep(2)
+                    
+                    # Check for rate limit error
+                    for _ in range(3):
+                        body_text = self.driver.find_element(By.TAG_NAME, "body").text
+                        if "too many" in body_text.lower() or "frequent attempts" in body_text.lower():
+                            log("RATE LIMITED! Waiting 60 seconds...")
+                            time.sleep(60)
+                            # Try clicking Next again
+                            buttons2 = self.driver.find_elements(By.TAG_NAME, "button")
+                            for btn2 in buttons2:
+                                if btn2.is_displayed() and "next" in btn2.text.lower():
+                                    self.driver.execute_script("arguments[0].click();", btn2)
+                                    log("Next clicked (retry)!")
+                                    self.wait_for_page(5)
+                                    time.sleep(2)
+                                    break
+                        else:
+                            break
+                    
+                    # Check for image CAPTCHA
                     time.sleep(1)
+                    body_text = self.driver.find_element(By.TAG_NAME, "body").text
+                    if "enter verification code" in body_text.lower() or "verification code" in body_text.lower():
+                        log("Image CAPTCHA detected after Next!")
+                        captcha_result = self.solve_image_captcha()
+                        if captcha_result:
+                            log(f"Image CAPTCHA solved: {captcha_result}")
+                            time.sleep(2)
+                    
                     return True
             return False
         except Exception as e:
@@ -479,6 +534,149 @@ class XiaomiAuto:
         
         log("reCAPTCHA not found")
         return False
+    
+    def solve_image_captcha(self):
+        """Solve image CAPTCHA using tesseract subprocess"""
+        log("Checking for image CAPTCHA...")
+        time.sleep(2)
+        
+        # Check if image CAPTCHA modal appeared
+        try:
+            # Look for "Enter verification code" modal
+            modals = self.driver.find_elements(By.XPATH, "//*[contains(text(), 'Enter verification code')]")
+            if not modals:
+                log("No image CAPTCHA found")
+                return None
+            
+            log("Image CAPTCHA detected!")
+            self.driver.save_screenshot("screenshots/captcha_modal.png")
+            
+            # Find CAPTCHA image
+            img_element = None
+            try:
+                img_elements = self.driver.find_elements(By.TAG_NAME, "img")
+                for img in img_elements:
+                    if img.is_displayed():
+                        src = img.get_attribute("src") or ""
+                        # Skip small icons
+                        width = img.size.get('width', 0)
+                        if width > 50 and ('captcha' in src.lower() or 'verify' in src.lower() or len(src) > 50):
+                            img_element = img
+                            break
+                
+                if not img_element:
+                    # Try finding any visible image that's not an icon
+                    for img in img_elements:
+                        if img.is_displayed():
+                            width = img.size.get('width', 0)
+                            if width > 80:  # CAPTCHA images are usually larger
+                                img_element = img
+                                break
+            except Exception as e:
+                log(f"Find image error: {e}")
+            
+            if not img_element:
+                log("Could not find CAPTCHA image")
+                return None
+            
+            # Download and process image
+            try:
+                src = img_element.get_attribute("src")
+                if src.startswith("data:"):
+                    import base64
+                    data = src.split(",")[1]
+                    img_data = base64.b64decode(data)
+                else:
+                    img_data = requests.get(src).content
+                
+                # Use tesseract to read text
+                log("Reading CAPTCHA with tesseract...")
+                
+                # Open image with PIL
+                pil_img = Image.open(BytesIO(img_data))
+                
+                # Save original for debugging
+                pil_img.save("screenshots/captcha_original.png")
+                
+                # Resize to make it bigger (helps OCR)
+                pil_img = pil_img.resize((pil_img.width * 3, pil_img.height * 3), Image.LANCZOS)
+                
+                # Convert to grayscale
+                pil_img = pil_img.convert('L')
+                
+                # Light thresholding (not too aggressive)
+                pil_img = pil_img.point(lambda x: 0 if x < 100 else 255)
+                
+                # Save temp file
+                temp_path = "screenshots/captcha_processed.png"
+                output_path = "screenshots/captcha_output"
+                pil_img.save(temp_path)
+                
+                # Call tesseract with different PSM modes
+                captcha_text = ""
+                for psm in ['7', '8', '13']:
+                    result = subprocess.run(
+                        [TESSERACT_CMD, temp_path, output_path, '--psm', psm, '-c', 'tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'],
+                        capture_output=True,
+                        text=True
+                    )
+                    try:
+                        with open(output_path + ".txt", "r") as f:
+                            text = f.read().strip()
+                            if text and len(text) >= 3:
+                                captcha_text = text
+                                break
+                    except:
+                        pass
+                
+                if captcha_text and len(captcha_text) >= 3:
+                    log(f"CAPTCHA text: {captcha_text}")
+                    
+                    # Find input field
+                    code_input = None
+                    all_inputs = self.driver.find_elements(By.TAG_NAME, "input")
+                    for inp in all_inputs:
+                        if inp.is_displayed() and inp.is_enabled():
+                            placeholder = inp.get_attribute("placeholder") or ""
+                            if 'code' in placeholder.lower() or 'captcha' in placeholder.lower():
+                                code_input = inp
+                                break
+                    
+                    if not code_input:
+                        # Try any visible text input
+                        for inp in all_inputs:
+                            if inp.is_displayed() and inp.is_enabled():
+                                inp_type = inp.get_attribute("type") or "text"
+                                if inp_type in ["text", "tel", "number", ""]:
+                                    code_input = inp
+                                    break
+                    
+                    if code_input:
+                        code_input.clear()
+                        code_input.send_keys(captcha_text)
+                        log(f"Code entered: {captcha_text}")
+                        time.sleep(1)
+                        
+                        # Click Submit
+                        buttons = self.driver.find_elements(By.TAG_NAME, "button")
+                        for btn in buttons:
+                            if btn.is_displayed() and 'submit' in btn.text.lower():
+                                self.driver.execute_script("arguments[0].click();", btn)
+                                log("CAPTCHA submitted!")
+                                time.sleep(3)
+                                return captcha_text
+                    else:
+                        log("Could not find input field!")
+                else:
+                    log(f"OCR failed, text: '{captcha_text}'")
+                
+            except Exception as e:
+                log(f"Process CAPTCHA error: {e}")
+            
+        except Exception as e:
+            log(f"Image CAPTCHA error: {e}")
+        
+        return None
     
     def submit_final(self):
         log("Submitting form...")
@@ -736,6 +934,264 @@ class XiaomiAuto:
             log(f"Copy error: {e}")
             return None
     
+    def get_referral_code(self):
+        """Get referral code from Refer & earn page"""
+        log("Getting referral code...")
+        time.sleep(2)
+        
+        # Click "Refer & earn" button
+        try:
+            buttons = self.driver.find_elements(By.TAG_NAME, "button")
+            for btn in buttons:
+                if btn.is_displayed():
+                    text = btn.text.lower()
+                    if 'refer' in text:
+                        self.driver.execute_script("arguments[0].click();", btn)
+                        log("Refer & earn clicked!")
+                        time.sleep(4)
+                        break
+        except Exception as e:
+            log(f"Refer button error: {e}")
+            return None
+        
+        # Take screenshot for debugging
+        self.driver.save_screenshot("screenshots/refer_modal.png")
+        
+        # Find invite code
+        try:
+            # Try multiple approaches to find the 6-character code (letters + numbers)
+            # Approach 1: Look for elements with exactly 6 alphanumeric characters
+            all_elements = self.driver.find_elements(By.XPATH, "//*[string-length(text())=6]")
+            for el in all_elements:
+                code = el.text.strip()
+                if code.isalnum() and len(code) == 6 and any(c.isalpha() for c in code) and any(c.isdigit() for c in code):
+                    log(f"Referral code found: {code}")
+                    self._close_refer_modal()
+                    return code
+            
+            # Approach 2: Look for elements containing "Invite code" and nearby code
+            invite_labels = self.driver.find_elements(By.XPATH, "//*[contains(text(), 'Invite code') or contains(text(), 'invite code')]")
+            for label in invite_labels:
+                try:
+                    parent = label.find_element(By.XPATH, "./..")
+                    code_elements = parent.find_elements(By.XPATH, ".//*[string-length(text())=6]")
+                    for code_el in code_elements:
+                        code = code_el.text.strip()
+                        if code.isalnum() and len(code) == 6:
+                            log(f"Referral code found: {code}")
+                            self._close_refer_modal()
+                            return code
+                except:
+                    pass
+            
+            # Approach 3: Look for any 6-char alphanumeric code in page text
+            body_text = self.driver.find_element(By.TAG_NAME, "body").text
+            import re
+            codes = re.findall(r'\b[A-Za-z0-9]{6}\b', body_text)
+            # Filter: must have both letters and numbers
+            for code in codes:
+                if any(c.isalpha() for c in code) and any(c.isdigit() for c in code):
+                    log(f"Referral code found in text: {code}")
+                    self._close_refer_modal()
+                    return code
+                
+        except Exception as e:
+            log(f"Find code error: {e}")
+        
+        log("Could not find referral code")
+        return None
+    
+    def _close_refer_modal(self):
+        """Close the referral modal"""
+        try:
+            # Try various close buttons
+            selectors = ["button[aria-label='close']", ".close-button", "button.modal-close"]
+            for sel in selectors:
+                try:
+                    close_btn = self.driver.find_element(By.CSS_SELECTOR, sel)
+                    if close_btn.is_displayed():
+                        self.driver.execute_script("arguments[0].click();", close_btn)
+                        time.sleep(1)
+                        return
+                except:
+                    continue
+            
+            # Try X button
+            x_buttons = self.driver.find_elements(By.XPATH, "//*[contains(text(), '×') or contains(@class, 'close')]")
+            for x in x_buttons:
+                if x.is_displayed():
+                    self.driver.execute_script("arguments[0].click();", x)
+                    time.sleep(1)
+                    return
+            
+            # Try Escape key
+            from selenium.webdriver.common.keys import Keys
+            self.driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+            time.sleep(1)
+        except:
+            pass
+    
+    def use_invite_code(self, code):
+        """Click 'Enter invite code +$2' and redeem a code from another account"""
+        if not code:
+            return False
+        
+        log(f"Using invite code: {code}")
+        time.sleep(2)
+        
+        # Click "Enter invite code +$2" button
+        try:
+            buttons = self.driver.find_elements(By.TAG_NAME, "button")
+            for btn in buttons:
+                if btn.is_displayed():
+                    text = btn.text.lower()
+                    if 'enter invite' in text or 'invite code' in text:
+                        self.driver.execute_script("arguments[0].click();", btn)
+                        log("Enter invite code clicked!")
+                        time.sleep(3)
+                        break
+        except Exception as e:
+            log(f"Click enter invite error: {e}")
+            return False
+        
+        # Take screenshot for debugging
+        self.driver.save_screenshot("screenshots/redeem_modal.png")
+        
+        # Enter code in the 6 input boxes
+        try:
+            # Find all input boxes in the redeem modal
+            inputs = self.driver.find_elements(By.CSS_SELECTOR, "input[maxlength='1']")
+            if not inputs:
+                # Try finding inputs by other selectors
+                inputs = self.driver.find_elements(By.CSS_SELECTOR, "input[type='text']")
+            
+            visible_inputs = [inp for inp in inputs if inp.is_displayed()]
+            
+            if len(visible_inputs) >= 6:
+                # Enter each character into each input box
+                for i, char in enumerate(code[:6]):
+                    visible_inputs[i].click()
+                    visible_inputs[i].send_keys(char)
+                    time.sleep(0.2)
+                log(f"Code entered: {code}")
+            else:
+                # Try single input field approach
+                for inp in visible_inputs:
+                    placeholder = inp.get_attribute("placeholder") or ""
+                    if 'code' in placeholder.lower() or 'invite' in placeholder.lower() or len(visible_inputs) == 1:
+                        inp.clear()
+                        inp.send_keys(code)
+                        log(f"Code entered in single input: {code}")
+                        break
+        except Exception as e:
+            log(f"Enter code error: {e}")
+            return False
+        
+        time.sleep(1)
+        
+        # Click "Redeem & get $2 credits →"
+        try:
+            buttons = self.driver.find_elements(By.TAG_NAME, "button")
+            for btn in buttons:
+                if btn.is_displayed():
+                    text = btn.text.lower()
+                    if 'redeem' in text:
+                        self.driver.execute_script("arguments[0].click();", btn)
+                        log("Redeem clicked!")
+                        time.sleep(3)
+                        
+                        # Check for success
+                        body_text = self.driver.find_element(By.TAG_NAME, "body").text
+                        if 'success' in body_text.lower() or '$2' in body_text:
+                            log("Redeem successful!")
+                            self._close_refer_modal()
+                            return True
+                        else:
+                            log("Redeem may have failed")
+                            self._close_refer_modal()
+                            return True  # Continue anyway
+        except Exception as e:
+            log(f"Redeem click error: {e}")
+        
+        self._close_refer_modal()
+        return False
+    
+    def use_referral_code(self, code):
+        """Use referral code on registration page"""
+        if not code:
+            return False
+            
+        log(f"Using referral code: {code}")
+        
+        # Look for referral input field
+        try:
+            # Find input with referral-related placeholder
+            inputs = self.driver.find_elements(By.TAG_NAME, "input")
+            for inp in inputs:
+                if inp.is_displayed():
+                    placeholder = inp.get_attribute("placeholder") or ""
+                    name = inp.get_attribute("name") or ""
+                    if any(w in placeholder.lower() for w in ['referral', 'refer', 'code', 'invite']):
+                        inp.clear()
+                        inp.send_keys(code)
+                        log(f"Referral code entered in input")
+                        return True
+                    elif any(w in name.lower() for w in ['referral', 'refer', 'code', 'invite']):
+                        inp.clear()
+                        inp.send_keys(code)
+                        log(f"Referral code entered in input")
+                        return True
+            
+            # Try URL parameter approach
+            current_url = self.driver.current_url
+            if "refer" not in current_url.lower():
+                new_url = current_url + ("&" if "?" in current_url else "?") + f"refer={code}"
+                self.driver.get(new_url)
+                time.sleep(3)
+                log("Referral code added via URL")
+                return True
+                
+        except Exception as e:
+            log(f"Use referral error: {e}")
+        
+        return False
+    
+    def save_referral_code(self, email, code):
+        """Save referral code to file"""
+        try:
+            referrals = []
+            try:
+                with open("results/referral_codes.json", "r") as f:
+                    referrals = json.load(f)
+            except:
+                pass
+            
+            # Add new referral
+            referrals.append({
+                "email": email,
+                "code": code
+            })
+            
+            with open("results/referral_codes.json", "w") as f:
+                json.dump(referrals, f, indent=2)
+            
+            log(f"Referral code saved: {code}")
+        except Exception as e:
+            log(f"Save referral error: {e}")
+    
+    def get_random_referral_code(self):
+        """Get a random referral code from saved codes"""
+        try:
+            with open("results/referral_codes.json", "r") as f:
+                referrals = json.load(f)
+            
+            if referrals:
+                ref = random.choice(referrals)
+                return ref.get("code")
+        except:
+            pass
+        return None
+    
     def run_single(self, model=None):
         """Create single account"""
         t_total = timer_start()
@@ -755,9 +1211,14 @@ class XiaomiAuto:
             timer_end(t, "Browser setup")
             self.temp_email = email
             
+            # Step 2.5: Get referral code from existing codes
+            referral_code = self.get_random_referral_code()
+            if referral_code:
+                log(f"Using referral code: {referral_code}")
+            
             # Step 3: Fill form
             t = timer_start()
-            self.fill_form()
+            self.fill_form(referral_code)
             timer_end(t, "Fill form")
             
             # Step 4: Click Next
@@ -807,9 +1268,27 @@ class XiaomiAuto:
                 self.accept_terms()
                 timer_end(t, "Accept Terms")
                 
-                # Step 10: Create API Key
+                # Step 10: Get referral code
                 t = timer_start()
-                log("Step 10: Creating API Key...")
+                log("Step 10: Getting referral code...")
+                new_referral = self.get_referral_code()
+                if new_referral:
+                    self.save_referral_code(self.temp_email, new_referral)
+                timer_end(t, "Get referral code")
+                
+                # Step 11: Use invite code from another account
+                t = timer_start()
+                log("Step 11: Using invite code...")
+                invite_code = self.get_random_referral_code()
+                if invite_code:
+                    self.use_invite_code(invite_code)
+                else:
+                    log("No invite codes available yet")
+                timer_end(t, "Use invite code")
+                
+                # Step 12: Create API Key
+                t = timer_start()
+                log("Step 12: Creating API Key...")
                 api_key = self.create_api_key()
                 timer_end(t, "Create API Key")
                 
@@ -817,7 +1296,8 @@ class XiaomiAuto:
                     result = {
                         "email": self.temp_email,
                         "password": self.password,
-                        "api_key": api_key
+                        "api_key": api_key,
+                        "referral_code": new_referral
                     }
                     with open("results/xiaomi_api_keys.json", "a") as f:
                         json.dump(result, f, indent=2)
@@ -830,6 +1310,8 @@ class XiaomiAuto:
                     print(f" Email: {self.temp_email}")
                     print(f" Password: {self.password}")
                     print(f" API Key: {api_key}")
+                    if new_referral:
+                        print(f" Referral Code: {new_referral}")
                     print("="*60)
                     return True
             
@@ -876,6 +1358,12 @@ class XiaomiAuto:
             else:
                 failed += 1
                 log(f"Failed! ({failed}/{count})")
+            
+            # Delay between accounts to avoid rate limiting
+            if i < count - 1:
+                delay = random.randint(10, 20)
+                log(f"Waiting {delay}s before next account...")
+                time.sleep(delay)
             
             # Tunggu sebentar sebelum account berikutnya
             if i < count - 1:
