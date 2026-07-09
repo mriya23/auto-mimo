@@ -11,6 +11,7 @@ import requests
 import whisper
 import tempfile
 import subprocess
+import numpy as np
 from io import BytesIO
 from PIL import Image
 from selenium import webdriver
@@ -22,7 +23,7 @@ from selenium.webdriver.support import expected_conditions as EC
 
 TESSERACT_CMD = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
-XIAOMI_URL = "https://global.account.xiaomi.com/fe/service/register?_locale=en_US&_uRegion=US"
+XIAOMI_URL = "https://global.account.xiaomi.com/fe/service/register"
 MAIL_API = "https://api.tempmail.lol/v2"
 
 def gen_password():
@@ -277,14 +278,28 @@ class XiaomiAuto:
                             break
                     
                     # Check for image CAPTCHA
-                    time.sleep(1)
-                    body_text = self.driver.find_element(By.TAG_NAME, "body").text
-                    if "enter verification code" in body_text.lower() or "verification code" in body_text.lower():
-                        log("Image CAPTCHA detected after Next!")
-                        captcha_result = self.solve_image_captcha()
-                        if captcha_result:
-                            log(f"Image CAPTCHA solved: {captcha_result}")
-                            time.sleep(2)
+                    for captcha_attempt in range(3):
+                        time.sleep(1)
+                        body_text = self.driver.find_element(By.TAG_NAME, "body").text
+                        if "enter verification code" in body_text.lower() or "verification code" in body_text.lower() or "enter captcha" in body_text.lower():
+                            log(f"Image CAPTCHA detected (attempt {captcha_attempt+1}/3)!")
+                            captcha_result = self.solve_image_captcha()
+                            if captcha_result:
+                                log(f"Image CAPTCHA solved: {captcha_result}")
+                                time.sleep(2)
+                                # Check if still on CAPTCHA (wrong code)
+                                body_text2 = self.driver.find_element(By.TAG_NAME, "body").text
+                                if "enter verification code" in body_text2.lower() or "enter captcha" in body_text2.lower():
+                                    log("CAPTCHA still showing - wrong code, retrying...")
+                                    continue
+                                else:
+                                    log("CAPTCHA gone - success!")
+                                    break
+                            else:
+                                log("CAPTCHA solve failed, retrying...")
+                                continue
+                        else:
+                            break
                     
                     return True
             return False
@@ -589,47 +604,102 @@ class XiaomiAuto:
                 else:
                     img_data = requests.get(src).content
                 
-                # Use tesseract to read text
                 log("Reading CAPTCHA with tesseract...")
                 
-                # Open image with PIL
                 pil_img = Image.open(BytesIO(img_data))
-                
-                # Save original for debugging
                 pil_img.save("screenshots/captcha_original.png")
                 
-                # Resize to make it bigger (helps OCR)
-                pil_img = pil_img.resize((pil_img.width * 3, pil_img.height * 3), Image.LANCZOS)
+                # Convert to OpenCV format
+                import cv2
+                import numpy as np
+                img_arr = np.array(pil_img)
+                if len(img_arr.shape) == 3:
+                    bgr = cv2.cvtColor(img_arr, cv2.COLOR_RGB2BGR)
+                    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+                else:
+                    gray = img_arr
                 
-                # Convert to grayscale
-                pil_img = pil_img.convert('L')
+                # Resize
+                gray = cv2.resize(gray, None, fx=5, fy=5, interpolation=cv2.INTER_CUBIC)
                 
-                # Light thresholding (not too aggressive)
-                pil_img = pil_img.point(lambda x: 0 if x < 100 else 255)
-                
-                # Save temp file
-                temp_path = "screenshots/captcha_processed.png"
                 output_path = "screenshots/captcha_output"
-                pil_img.save(temp_path)
-                
-                # Call tesseract with different PSM modes
                 captcha_text = ""
-                for psm in ['7', '8', '13']:
-                    result = subprocess.run(
-                        [TESSERACT_CMD, temp_path, output_path, '--psm', psm, '-c', 'tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'],
-                        capture_output=True,
-                        text=True
-                    )
-                    try:
-                        with open(output_path + ".txt", "r") as f:
-                            text = f.read().strip()
-                            if text and len(text) >= 3:
-                                captcha_text = text
-                                break
-                    except:
-                        pass
                 
-                if captcha_text and len(captcha_text) >= 3:
+                # Method 1: Adaptive threshold
+                adaptive = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+                cv2.imwrite("screenshots/captcha_adaptive.png", adaptive)
+                
+                # Method 2: Otsu threshold
+                _, otsu = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                cv2.imwrite("screenshots/captcha_otsu.png", otsu)
+                
+                # Method 3: Median blur + threshold
+                blurred = cv2.medianBlur(gray, 3)
+                _, median_thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                cv2.imwrite("screenshots/captcha_median.png", median_thresh)
+                
+                # Method 4: Morphological - remove noise
+                kernel = np.ones((2,2), np.uint8)
+                morph = cv2.morphologyEx(otsu, cv2.MORPH_OPEN, kernel)
+                cv2.imwrite("screenshots/captcha_morph.png", morph)
+                
+                # Method 5: Inverted adaptive
+                inv_adaptive = cv2.bitwise_not(adaptive)
+                cv2.imwrite("screenshots/captcha_inv.png", inv_adaptive)
+                
+                methods = [
+                    ("adaptive", adaptive),
+                    ("otsu", otsu),
+                    ("median", median_thresh),
+                    ("morph", morph),
+                    ("inv", inv_adaptive),
+                ]
+                
+                for name, img in methods:
+                    temp_path = f"screenshots/captcha_{name}.png"
+                    cv2.imwrite(temp_path, img)
+                    
+                    for psm in ['7', '8', '13', '6', '10']:
+                        result = subprocess.run(
+                            [TESSERACT_CMD, temp_path, output_path, '--psm', psm,
+                             '-c', 'tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'],
+                            capture_output=True, text=True
+                        )
+                        try:
+                            with open(output_path + ".txt", "r") as f:
+                                text = f.read().strip()
+                                if text and 4 <= len(text) <= 6 and text.isalnum():
+                                    captcha_text = text
+                                    log(f"OCR success ({name}, psm={psm}): {captcha_text}")
+                                    break
+                        except:
+                            pass
+                    if captcha_text:
+                        break
+                
+                # Fallback: try len 3-5
+                if not captcha_text:
+                    for name, img in methods:
+                        temp_path = f"screenshots/captcha_{name}.png"
+                        for psm in ['7', '8', '13']:
+                            result = subprocess.run(
+                                [TESSERACT_CMD, temp_path, output_path, '--psm', psm,
+                                 '-c', 'tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'],
+                                capture_output=True, text=True
+                            )
+                            try:
+                                with open(output_path + ".txt", "r") as f:
+                                    text = f.read().strip()
+                                    if text and 3 <= len(text) <= 6 and text.isalnum():
+                                        captcha_text = text
+                                        log(f"OCR fallback ({name}, psm={psm}): {captcha_text}")
+                                        break
+                            except:
+                                pass
+                        if captcha_text:
+                            break
+                
+                if captcha_text:
                     log(f"CAPTCHA text: {captcha_text}")
                     
                     # Find input field
@@ -643,7 +713,6 @@ class XiaomiAuto:
                                 break
                     
                     if not code_input:
-                        # Try any visible text input
                         for inp in all_inputs:
                             if inp.is_displayed() and inp.is_enabled():
                                 inp_type = inp.get_attribute("type") or "text"
@@ -657,18 +726,24 @@ class XiaomiAuto:
                         log(f"Code entered: {captcha_text}")
                         time.sleep(1)
                         
-                        # Click Submit
                         buttons = self.driver.find_elements(By.TAG_NAME, "button")
                         for btn in buttons:
                             if btn.is_displayed() and 'submit' in btn.text.lower():
                                 self.driver.execute_script("arguments[0].click();", btn)
                                 log("CAPTCHA submitted!")
                                 time.sleep(3)
+                                
+                                body_text = self.driver.find_element(By.TAG_NAME, "body").text
+                                if 'enter captcha' in body_text.lower() or 'enter verification' in body_text.lower():
+                                    log("CAPTCHA still showing - might be wrong code")
+                                    return None
+                                
+                                self._image_captcha_solved = True
                                 return captcha_text
                     else:
                         log("Could not find input field!")
                 else:
-                    log(f"OCR failed, text: '{captcha_text}'")
+                    log("OCR failed on all methods")
                 
             except Exception as e:
                 log(f"Process CAPTCHA error: {e}")
@@ -1192,6 +1267,21 @@ class XiaomiAuto:
             pass
         return None
     
+    def get_all_referral_codes(self):
+        """Get all referral codes from saved codes"""
+        codes = []
+        try:
+            with open("results/referral_codes.json", "r") as f:
+                referrals = json.load(f)
+            
+            for ref in referrals:
+                code = ref.get("code")
+                if code:
+                    codes.append(code)
+        except:
+            pass
+        return codes
+    
     def run_single(self, model=None):
         """Create single account"""
         t_total = timer_start()
@@ -1229,9 +1319,13 @@ class XiaomiAuto:
                 log("Next not found!")
                 return False
             
-            # Step 5: Solve CAPTCHA
+            # Step 5: Solve CAPTCHA (skip if image CAPTCHA was already solved)
             t = timer_start()
-            captcha = self.solve_recaptcha_audio(model)
+            if hasattr(self, '_image_captcha_solved') and self._image_captcha_solved:
+                log("Image CAPTCHA already solved, skipping reCAPTCHA")
+                captcha = True
+            else:
+                captcha = self.solve_recaptcha_audio(model)
             timer_end(t, "Solve CAPTCHA")
             if not captcha:
                 log("CAPTCHA failed!")
@@ -1276,15 +1370,20 @@ class XiaomiAuto:
                     self.save_referral_code(self.temp_email, new_referral)
                 timer_end(t, "Get referral code")
                 
-                # Step 11: Use invite code from another account
+                # Step 11: Use ALL invite codes from other accounts
                 t = timer_start()
-                log("Step 11: Using invite code...")
-                invite_code = self.get_random_referral_code()
-                if invite_code:
-                    self.use_invite_code(invite_code)
-                else:
-                    log("No invite codes available yet")
-                timer_end(t, "Use invite code")
+                log("Step 11: Using ALL invite codes...")
+                all_referral_codes = self.get_all_referral_codes()
+                redeemed = 0
+                for ref_code in all_referral_codes:
+                    if ref_code != new_referral:  # Jangan pake code sendiri
+                        log(f"Trying invite code: {ref_code}")
+                        if self.use_invite_code(ref_code):
+                            redeemed += 1
+                            log(f"Redeemed {redeemed}/{len(all_referral_codes)}")
+                        time.sleep(1)
+                log(f"Total redeemed: {redeemed} codes")
+                timer_end(t, "Use invite codes")
                 
                 # Step 12: Create API Key
                 t = timer_start()
