@@ -18,7 +18,7 @@ if sys.platform == 'win32':
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from ui import *
-from main import XiaomiAuto, TempMailAPI, log
+from main import XiaomiAuto, TempMailAPI, gen_password, log, XIAOMI_URL, MAIL_API
 
 RESULTS_DIR = Path("results")
 
@@ -69,9 +69,9 @@ def handle_create_account():
     """Handle single account creation"""
     clear()
     print(f"""
-{C.CYAN}╔══════════════════════════════════════════════════════════════════╗
-║                    {C.BOLD}{C.WHITE}CREATE ACCOUNT{C.RESET}{C.CYAN}                            ║
-╚══════════════════════════════════════════════════════════════════╝{C.RESET}
+{C.CYAN}+====================================================================+
+|                    {C.BOLD}{C.WHITE}CREATE ACCOUNT{C.RESET}{C.CYAN}                            |
++====================================================================+{C.RESET}
 """)
     
     # Load existing referral codes
@@ -98,74 +98,79 @@ def handle_create_account():
         auto = XiaomiAuto(headless=True)
         
         # Create email
-        print(f"  {C.CYAN}→{C.RESET} Creating temporary email...")
+        print(f"  {C.CYAN}->{C.RESET} Creating temporary email...")
         email_data = temp_mail.create_email()
         temp_email = email_data.get("address", "")
-        print(f"  {C.GREEN}✓{C.RESET} Email: {C.CYAN}{temp_email}{C.RESET}")
+        print(f"  {C.GREEN}V{C.RESET} Email: {C.CYAN}{temp_email}{C.RESET}")
         
         # Set email and password
         auto.temp_email = temp_email
         auto.password = gen_password()
         
         # Fill form
-        print(f"  {C.CYAN}→{C.RESET} Filling registration form...")
+        print(f"  {C.CYAN}->{C.RESET} Filling registration form...")
         auto.fill_form(referral_code)
         
         # Click Next
-        print(f"  {C.CYAN}→{C.RESET} Submitting form...")
+        print(f"  {C.CYAN}->{C.RESET} Submitting form...")
         if not auto.click_next():
             error_screen("Failed to click Next")
             return
         
         # Solve CAPTCHA
-        print(f"  {C.CYAN}→{C.RESET} Solving CAPTCHA...")
+        print(f"  {C.CYAN}->{C.RESET} Solving CAPTCHA...")
         if not auto.solve_recaptcha_audio(None):
             error_screen("CAPTCHA failed")
             return
         
         # Submit
-        print(f"  {C.CYAN}→{C.RESET} Final submission...")
+        print(f"  {C.CYAN}->{C.RESET} Final submission...")
         if not auto.submit_final():
             error_screen("Submission failed")
             return
         
         # Wait for email
-        print(f"  {C.CYAN}→{C.RESET} Waiting for verification email...")
-        code = temp_mail.wait_for_code("xiaomi", max_wait=60)
-        if not code:
+        print(f"  {C.CYAN}->{C.RESET} Waiting for verification email...")
+        message = temp_mail.wait_for_message("xiaomi", timeout=60)
+        if not message:
             error_screen("Verification code not received")
             return
         
-        # Enter code
-        print(f"  {C.CYAN}→{C.RESET} Entering verification code: {code}")
-        auto.enter_code(code)
+        # Extract code from message
+        code = temp_mail.extract_verification_code(message)
+        if not code:
+            error_screen("Could not extract verification code")
+            return
         
-        # Submit code
-        auto.submit_code()
+        # Enter code
+        print(f"  {C.CYAN}->{C.RESET} Entering verification code: {code}")
+        if not auto.enter_code(code):
+            error_screen("Failed to enter verification code")
+            return
         
         # Extract session
-        print(f"  {C.CYAN}→{C.RESET} Extracting session...")
+        print(f"  {C.CYAN}->{C.RESET} Extracting session...")
         session = auto.extract_session()
         
         # Accept terms
-        print(f"  {C.CYAN}→{C.RESET} Accepting terms...")
+        print(f"  {C.CYAN}->{C.RESET} Accepting terms...")
         auto.accept_terms()
         
         # Get referral code
-        print(f"  {C.CYAN}→{C.RESET} Getting referral code...")
+        print(f"  {C.CYAN}->{C.RESET} Getting referral code...")
         new_referral = auto.get_referral_code()
         if new_referral:
-            save_referral_code(temp_email, new_referral)
-            print(f"  {C.GREEN}✓{C.RESET} New referral code: {C.ORANGE}{new_referral}{C.RESET}")
+            auto.save_referral_code(temp_email, new_referral)
+            print(f"  {C.GREEN}V{C.RESET} New referral code: {C.ORANGE}{new_referral}{C.RESET}")
         
         # Redeem invite codes
-        print(f"  {C.CYAN}→{C.RESET} Redeeming invite codes...")
+        print(f"  {C.CYAN}->{C.RESET} Redeeming invite codes...")
         all_codes = load_referral_codes()
         redeemed = auto.use_invite_codes_batch(all_codes, new_referral)
-        print(f"  {C.GREEN}✓{C.RESET} Redeemed {redeemed} codes")
+        print(f"  {C.GREEN}V{C.RESET} Redeemed {redeemed} codes")
         
         # Create API key
-        print(f"  {C.CYAN}→{C.RESET} Creating API key...")
+        print(f"  {C.CYAN}->{C.RESET} Creating API key...")
         api_key = auto.create_api_key()
         
         if api_key:
@@ -193,9 +198,11 @@ def handle_create_account():
             error_screen("Failed to create API key")
         
     except KeyboardInterrupt:
-        print(f"\n\n  {C.YELLOW}⚠ Operation cancelled{C.RESET}")
+        print(f"\n\n  {C.YELLOW}! Operation cancelled{C.RESET}")
     except Exception as e:
+        import traceback
         error_screen(str(e))
+        traceback.print_exc()
     finally:
         try:
             auto.driver.quit()
