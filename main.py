@@ -150,35 +150,28 @@ class XiaomiAuto:
         options = Options()
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
-        options.add_argument('--window-size=1920,1080')
+        
+        # Randomize window size slightly
+        w, h = 1920 + random.randint(-20, 20), 1080 + random.randint(-10, 10)
+        options.add_argument(f'--window-size={w},{h}')
+        
+        # Stealth: remove automation flags
         options.add_argument('--disable-blink-features=AutomationControlled')
-        options.add_experimental_option('excludeSwitches', ['enable-automation'])
+        options.add_experimental_option('excludeSwitches', ['enable-automation', 'enable-logging'])
         options.add_experimental_option('useAutomationExtension', False)
+        
+        # Realistic user agent
         options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36')
         
-        # Performance optimizations
-        options.add_argument('--disable-images')
-        options.add_argument('--disable-javascript')
-        options.add_argument('--disable-css')
+        # Performance - keep only safe ones
         options.add_argument('--disable-extensions')
-        options.add_argument('--disable-plugins')
         options.add_argument('--disable-gpu')
-        options.add_argument('--disable-logging')
+        options.add_argument('--no-first-run')
         options.add_argument('--disable-default-apps')
         options.add_argument('--disable-translate')
-        options.add_argument('--no-first-run')
-        options.add_argument('--fast')
-        options.add_argument('--aggressive-cache-discard')
         
-        # Stealth arguments
-        options.add_argument('--disable-web-security')
-        options.add_argument('--allow-running-insecure-content')
-        options.add_argument('--disable-site-isolation-trials')
-        options.add_argument('--disable-features=IsolateOrigins,site-per-process')
-        
-        # Page load strategy - none = fastest
-        caps = options.capabilities
-        caps['pageLoadStrategy'] = 'none'
+        # Page load strategy - eager is faster but still loads DOM
+        options.page_load_strategy = 'eager'
         
         if with_extension:
             ext_path = os.path.abspath(BUSTER_EXTENSION_DIR)
@@ -189,7 +182,7 @@ class XiaomiAuto:
         self.driver = webdriver.Chrome(options=options)
         self.wait = WebDriverWait(self.driver, 10)
         
-        # Stealth: inject JS to hide webdriver
+        # Stealth: inject advanced JS to hide automation
         self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
             'source': '''
                 // Hide webdriver
@@ -210,6 +203,12 @@ class XiaomiAuto:
                 // Fake platform
                 Object.defineProperty(navigator, 'platform', {get: () => 'Win32'});
                 
+                // Hardware concurrency (realistic)
+                Object.defineProperty(navigator, 'hardwareConcurrency', {get: () => 8});
+                
+                // Device memory
+                Object.defineProperty(navigator, 'deviceMemory', {get: () => 8});
+                
                 // Fix chrome object
                 window.chrome = {runtime: {}, loadTimes: function(){}, csi: function(){}, app: {}};
                 
@@ -220,7 +219,42 @@ class XiaomiAuto:
                     Promise.resolve({state: Notification.permission}) :
                     originalQuery(parameters)
                 );
+                
+                // WebGL vendor/renderer spoofing
+                const getParameter = WebGLRenderingContext.prototype.getParameter;
+                WebGLRenderingContext.prototype.getParameter = function(param) {
+                    if (param === 37445) return 'Intel Inc.';
+                    if (param === 37446) return 'Intel Iris OpenGL Engine';
+                    return getParameter.apply(this, arguments);
+                };
+                
+                // Screen depth
+                Object.defineProperty(screen, 'colorDepth', {get: () => 24});
+                Object.defineProperty(screen, 'pixelDepth', {get: () => 24});
+                Object.defineProperty(screen, 'availWidth', {get: () => screen.width});
+                Object.defineProperty(screen, 'availHeight', {get: () => screen.height - 40});
+                
+                // Connection (realistic)
+                Object.defineProperty(navigator, 'connection', {
+                    get: () => ({
+                        effectiveType: '4g',
+                        rtt: 50,
+                        downlink: 10,
+                        saveData: false
+                    })
+                });
+                
+                // Remove webdriver traces from document
+                document.documentElement.removeAttribute('webdriver');
+                
+                // Override toString to pass checks
+                window.navigator.toString = () => '[object Navigator]';
             '''
+        })
+        
+        # Set realistic timezone
+        self.driver.execute_cdp_cmd('Emulation.setTimezoneOverride', {
+            'timezoneId': 'Asia/Jakarta'
         })
         
         log("Browser started with stealth!")
@@ -1287,7 +1321,7 @@ class XiaomiAuto:
         return False
     
     def use_invite_codes_batch(self, codes, own_code=None):
-        """Redeem multiple codes - close modal after each to avoid stale React state"""
+        """Redeem the most recent code only (latest from referral_codes.json)"""
         if not codes:
             return 0
         
@@ -1295,34 +1329,30 @@ class XiaomiAuto:
         if not valid_codes:
             return 0
         
-        redeemed = 0
+        code = valid_codes[-1]
+        log(f"Trying invite code: {code}")
         
-        for code in valid_codes:
-            log(f"Trying invite code: {code}")
-            
-            # Open modal
-            if not self._open_invite_modal():
-                log("Failed to open invite modal")
-                continue
-            
-            # Enter code
-            if self._enter_code_in_modal(code):
-                time.sleep(0.3)
-                
-                # Click redeem
-                if self._click_redeem():
-                    if self._is_success():
-                        redeemed += 1
-                        log(f"Redeem successful! ({redeemed}/{len(valid_codes)})")
-                    elif self._is_code_found_error():
-                        log("Code not found, skipping...")
-                    else:
-                        log("Unknown result, continuing...")
-                
-            # Close modal after each code to reset React state
+        if not self._open_invite_modal():
+            log("Failed to open invite modal")
+            return 0
+        
+        if not self._enter_code_in_modal(code):
             self._close_refer_modal()
-            time.sleep(0.3)
+            return 0
         
+        time.sleep(0.3)
+        
+        redeemed = 0
+        if self._click_redeem():
+            if self._is_success():
+                redeemed = 1
+                log(f"Redeem successful!")
+            elif self._is_code_found_error():
+                log("Code not found")
+            else:
+                log("Unknown result")
+        
+        self._close_refer_modal()
         return redeemed
     
     def use_referral_code(self, code):
@@ -1401,17 +1431,20 @@ class XiaomiAuto:
             pass
         return None
     
-    def get_all_referral_codes(self):
-        """Get all referral codes from saved codes"""
+    def get_newest_codes(self, count=3):
+        """Get newest N referral codes from saved codes"""
         codes = []
         try:
             with open("results/referral_codes.json", "r") as f:
                 referrals = json.load(f)
             
-            for ref in referrals:
+            # Reverse to get newest first (assuming append = newest at end)
+            for ref in reversed(referrals):
                 code = ref.get("code")
-                if code:
+                if code and code not in codes:
                     codes.append(code)
+                    if len(codes) >= count:
+                        break
         except:
             pass
         return codes
@@ -1504,12 +1537,12 @@ class XiaomiAuto:
                     self.save_referral_code(self.temp_email, new_referral)
                 timer_end(t, "Get referral code")
                 
-                # Step 11: Use ALL invite codes from other accounts
+                # Step 11: Use invite codes (newest 3 only)
                 t = timer_start()
-                log("Step 11: Using ALL invite codes...")
-                all_referral_codes = self.get_all_referral_codes()
-                redeemed = self.use_invite_codes_batch(all_referral_codes, new_referral)
-                log(f"Total redeemed: {redeemed} codes")
+                log("Step 11: Using invite codes...")
+                latest_codes = self.get_newest_codes(count=3)
+                redeemed = self.use_invite_codes_batch(latest_codes, new_referral)
+                log(f"Redeemed: {redeemed} codes")
                 timer_end(t, "Use invite codes")
                 
                 # Step 12: Create API Key
