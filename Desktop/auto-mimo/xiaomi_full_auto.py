@@ -150,6 +150,24 @@ class XiaomiAuto:
         options.add_experimental_option('excludeSwitches', ['enable-automation'])
         options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
         
+        # Performance optimizations
+        options.add_argument('--disable-images')
+        options.add_argument('--disable-javascript')
+        options.add_argument('--disable-css')
+        options.add_argument('--disable-extensions')
+        options.add_argument('--disable-plugins')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--disable-logging')
+        options.add_argument('--disable-default-apps')
+        options.add_argument('--disable-translate')
+        options.add_argument('--no-first-run')
+        options.add_argument('--fast')
+        options.add_argument('--aggressive-cache-discard')
+        
+        # Page load strategy - none = fastest
+        caps = options.capabilities
+        caps['pageLoadStrategy'] = 'none'
+        
         if with_extension:
             ext_path = os.path.abspath(BUSTER_EXTENSION_DIR)
             if os.path.exists(ext_path):
@@ -157,13 +175,23 @@ class XiaomiAuto:
                 log(f"Loading extension from: {ext_path}")
         
         self.driver = webdriver.Chrome(options=options)
-        self.wait = WebDriverWait(self.driver, 20)
+        self.wait = WebDriverWait(self.driver, 10)
         log("Browser started!")
+    
+    def wait_for_page(self, timeout=10):
+        """Wait for page to be ready"""
+        try:
+            WebDriverWait(self.driver, timeout).until(
+                lambda d: d.execute_script("return document.readyState") == "complete"
+            )
+        except:
+            pass
     
     def fill_form(self):
         log("Opening Xiaomi registration...")
         self.driver.get(XIAOMI_URL)
-        time.sleep(5)
+        self.wait_for_page(8)
+        time.sleep(2)
         
         self.password = gen_password()
         log(f"Password: {self.password}")
@@ -201,7 +229,8 @@ class XiaomiAuto:
                 if btn.is_displayed() and "next" in btn.text.lower():
                     self.driver.execute_script("arguments[0].click();", btn)
                     log("Next clicked!")
-                    time.sleep(3)
+                    self.wait_for_page(5)
+                    time.sleep(1)
                     return True
             return False
         except Exception as e:
@@ -524,7 +553,8 @@ class XiaomiAuto:
         """Accept Terms & Agreements on MiMo platform"""
         log("Navigating to MiMo platform...")
         self.driver.get("https://platform.xiaomimimo.com/")
-        time.sleep(4)
+        self.wait_for_page(5)
+        time.sleep(2)
         
         # Cek apakah ada Terms & Agreements popup
         try:
@@ -557,7 +587,8 @@ class XiaomiAuto:
         """Create API key on MiMo platform"""
         log("Navigating to API Keys page...")
         self.driver.get("https://platform.xiaomimimo.com/console/api-keys")
-        time.sleep(3)
+        self.wait_for_page(5)
+        time.sleep(2)
         
         # Click "Create API Key" button
         try:
