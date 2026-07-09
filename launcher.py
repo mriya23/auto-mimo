@@ -95,7 +95,8 @@ def handle_create_account():
         # Initialize components
         print(f"\n  {C.DIM_W}Initializing...{C.RESET}")
         temp_mail = TempMailAPI()
-        auto = XiaomiAuto(headless=True)
+        auto = XiaomiAuto()
+        auto.setup_browser(with_extension=False)
         
         # Create email
         print(f"  {C.CYAN}->{C.RESET} Creating temporary email...")
