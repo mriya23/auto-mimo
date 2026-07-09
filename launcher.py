@@ -100,8 +100,10 @@ def handle_create_account():
         
         # Create email
         print(f"  {C.CYAN}->{C.RESET} Creating temporary email...")
-        email_data = temp_mail.create_email()
-        temp_email = email_data.get("address", "")
+        temp_email = temp_mail.create_account()
+        if not temp_email:
+            error_screen("Failed to create temp email")
+            return
         print(f"  {C.GREEN}V{C.RESET} Email: {C.CYAN}{temp_email}{C.RESET}")
         
         # Set email and password
