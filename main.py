@@ -153,7 +153,8 @@ class XiaomiAuto:
         options.add_argument('--window-size=1920,1080')
         options.add_argument('--disable-blink-features=AutomationControlled')
         options.add_experimental_option('excludeSwitches', ['enable-automation'])
-        options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
+        options.add_experimental_option('useAutomationExtension', False)
+        options.add_argument('user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36')
         
         # Performance optimizations
         options.add_argument('--disable-images')
@@ -169,6 +170,12 @@ class XiaomiAuto:
         options.add_argument('--fast')
         options.add_argument('--aggressive-cache-discard')
         
+        # Stealth arguments
+        options.add_argument('--disable-web-security')
+        options.add_argument('--allow-running-insecure-content')
+        options.add_argument('--disable-site-isolation-trials')
+        options.add_argument('--disable-features=IsolateOrigins,site-per-process')
+        
         # Page load strategy - none = fastest
         caps = options.capabilities
         caps['pageLoadStrategy'] = 'none'
@@ -181,7 +188,42 @@ class XiaomiAuto:
         
         self.driver = webdriver.Chrome(options=options)
         self.wait = WebDriverWait(self.driver, 10)
-        log("Browser started!")
+        
+        # Stealth: inject JS to hide webdriver
+        self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
+            'source': '''
+                // Hide webdriver
+                Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                
+                // Fake plugins
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [
+                        {name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer'},
+                        {name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai'},
+                        {name: 'Native Client', filename: 'internal-nacl-plugin'}
+                    ]
+                });
+                
+                // Fake languages
+                Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+                
+                // Fake platform
+                Object.defineProperty(navigator, 'platform', {get: () => 'Win32'});
+                
+                // Fix chrome object
+                window.chrome = {runtime: {}, loadTimes: function(){}, csi: function(){}, app: {}};
+                
+                // Fix permissions
+                const originalQuery = window.navigator.permissions.query;
+                window.navigator.permissions.query = (parameters) => (
+                    parameters.name === 'notifications' ?
+                    Promise.resolve({state: Notification.permission}) :
+                    originalQuery(parameters)
+                );
+            '''
+        })
+        
+        log("Browser started with stealth!")
     
     def wait_for_page(self, timeout=10):
         """Wait for page to be ready"""
@@ -193,45 +235,80 @@ class XiaomiAuto:
             pass
     
     def human_type(self, element, text):
-        """Type like a human - one by one with small delays"""
+        """Type like a human - variable speed with random pauses"""
         element.clear()
-        for char in text:
+        i = 0
+        while i < len(text):
+            char = text[i]
             element.send_keys(char)
-            time.sleep(random.uniform(0.03, 0.1))  # 30-100ms per char
+            
+            # Random delay - faster for common chars, slower for special
+            if char in 'aeiou ':
+                delay = random.uniform(0.02, 0.08)  # Vowels faster
+            elif char.isupper():
+                delay = random.uniform(0.05, 0.12)  # Uppercase slightly slower
+            elif char in '!@#$%^&*':
+                delay = random.uniform(0.08, 0.15)  # Special chars slower
+            else:
+                delay = random.uniform(0.03, 0.10)
+            
+            # Occasional longer pause (like thinking)
+            if random.random() < 0.05:
+                delay += random.uniform(0.2, 0.5)
+            
+            time.sleep(delay)
+            i += 1
+    
+    def random_mouse_move(self):
+        """Move mouse randomly to look human"""
+        try:
+            from selenium.webdriver.common.action_chains import ActionChains
+            actions = ActionChains(self.driver)
+            x = random.randint(100, 800)
+            y = random.randint(100, 500)
+            actions.move_by_offset(x, y).pause(random.uniform(0.1, 0.3)).perform()
+            actions = ActionChains(self.driver)
+            actions.move_by_offset(-x, -y).perform()
+        except:
+            pass
     
     def fill_form(self, referral_code=None):
         log("Opening Xiaomi registration...")
         self.driver.get(XIAOMI_URL)
         self.wait_for_page(8)
-        time.sleep(2)
+        time.sleep(random.uniform(1.5, 2.5))
         
         self.password = gen_password()
         log(f"Password: {self.password}")
         
+        self.random_mouse_move()
+        
         # Type email like human
         email_input = self.wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[name='email']")))
         self.driver.execute_script("arguments[0].click();", email_input)
-        time.sleep(0.3)
+        time.sleep(random.uniform(0.2, 0.5))
         self.human_type(email_input, self.temp_email)
-        time.sleep(0.5)
+        time.sleep(random.uniform(0.3, 0.7))
         
         # Tab to password, type like human
         email_input.send_keys(Keys.TAB)
-        time.sleep(0.3)
+        time.sleep(random.uniform(0.2, 0.4))
         pass_input = self.driver.find_element(By.CSS_SELECTOR, "input[name='password']")
         self.driver.execute_script("arguments[0].click();", pass_input)
-        time.sleep(0.2)
+        time.sleep(random.uniform(0.1, 0.3))
         self.human_type(pass_input, self.password)
-        time.sleep(0.5)
+        time.sleep(random.uniform(0.3, 0.7))
         
         # Tab to confirm password, type like human
         pass_input.send_keys(Keys.TAB)
-        time.sleep(0.3)
+        time.sleep(random.uniform(0.2, 0.4))
         confirm_input = self.driver.find_element(By.CSS_SELECTOR, "input[name='repassword']")
         self.driver.execute_script("arguments[0].click();", confirm_input)
-        time.sleep(0.2)
+        time.sleep(random.uniform(0.1, 0.3))
         self.human_type(confirm_input, self.password)
-        time.sleep(0.5)
+        time.sleep(random.uniform(0.3, 0.7))
+        
+        self.random_mouse_move()
         
         # Enter referral code if provided
         if referral_code:
@@ -243,13 +320,13 @@ class XiaomiAuto:
                         name = inp.get_attribute("name") or ""
                         if any(w in placeholder.lower() for w in ['referral', 'refer', 'code', 'invite']):
                             self.driver.execute_script("arguments[0].click();", inp)
-                            time.sleep(0.3)
+                            time.sleep(random.uniform(0.2, 0.4))
                             self.human_type(inp, referral_code)
                             log(f"Referral code entered: {referral_code}")
                             break
                         elif any(w in name.lower() for w in ['referral', 'refer', 'code', 'invite']):
                             self.driver.execute_script("arguments[0].click();", inp)
-                            time.sleep(0.3)
+                            time.sleep(random.uniform(0.2, 0.4))
                             self.human_type(inp, referral_code)
                             log(f"Referral code entered: {referral_code}")
                             break
@@ -1130,7 +1207,7 @@ class XiaomiAuto:
             return False
         
         log(f"Using invite code: {code}")
-        time.sleep(2)
+        time.sleep(1)
         
         # Click "Enter invite code +$2" button
         try:
@@ -1141,18 +1218,14 @@ class XiaomiAuto:
                     if 'enter invite' in text or 'invite code' in text:
                         self.driver.execute_script("arguments[0].click();", btn)
                         log("Enter invite code clicked!")
-                        time.sleep(3)
+                        time.sleep(1.5)
                         break
         except Exception as e:
             log(f"Click enter invite error: {e}")
             return False
         
-        # Take screenshot for debugging
-        self.driver.save_screenshot("screenshots/redeem_modal.png")
-        
         # Enter code in the 6 input boxes
         try:
-            # Find all input boxes in the redeem modal
             inputs = self.driver.find_elements(By.CSS_SELECTOR, "input[maxlength='1']")
             if not inputs:
                 inputs = self.driver.find_elements(By.CSS_SELECTOR, "input[type='text']")
@@ -1160,20 +1233,16 @@ class XiaomiAuto:
             visible_inputs = [inp for inp in inputs if inp.is_displayed()]
             
             if len(visible_inputs) >= 6:
-                # Enter each character into each input box like human
                 for i, char in enumerate(code[:6]):
                     visible_inputs[i].click()
-                    time.sleep(0.1)
                     visible_inputs[i].send_keys(char)
-                    time.sleep(random.uniform(0.1, 0.3))  # Random delay
+                    time.sleep(0.05)
                 log(f"Code entered: {code}")
             else:
-                # Try single input field approach
                 for inp in visible_inputs:
                     placeholder = inp.get_attribute("placeholder") or ""
                     if 'code' in placeholder.lower() or 'invite' in placeholder.lower() or len(visible_inputs) == 1:
                         inp.click()
-                        time.sleep(0.3)
                         self.human_type(inp, code)
                         log(f"Code entered in single input: {code}")
                         break
@@ -1181,7 +1250,7 @@ class XiaomiAuto:
             log(f"Enter code error: {e}")
             return False
         
-        time.sleep(1)
+        time.sleep(0.5)
         
         # Click "Redeem & get $2 credits →"
         try:
@@ -1192,7 +1261,7 @@ class XiaomiAuto:
                     if 'redeem' in text:
                         self.driver.execute_script("arguments[0].click();", btn)
                         log("Redeem clicked!")
-                        time.sleep(3)
+                        time.sleep(1.5)
                         
                         # Check for success
                         body_text = self.driver.find_element(By.TAG_NAME, "body").text
@@ -1395,12 +1464,11 @@ class XiaomiAuto:
                 all_referral_codes = self.get_all_referral_codes()
                 redeemed = 0
                 for ref_code in all_referral_codes:
-                    if ref_code != new_referral:  # Jangan pake code sendiri
+                    if ref_code != new_referral:
                         log(f"Trying invite code: {ref_code}")
                         if self.use_invite_code(ref_code):
                             redeemed += 1
                             log(f"Redeemed {redeemed}/{len(all_referral_codes)}")
-                        time.sleep(1)
                 log(f"Total redeemed: {redeemed} codes")
                 timer_end(t, "Use invite codes")
                 
