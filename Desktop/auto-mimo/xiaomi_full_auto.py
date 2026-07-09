@@ -163,7 +163,7 @@ class XiaomiAuto:
     def fill_form(self):
         log("Opening Xiaomi registration...")
         self.driver.get(XIAOMI_URL)
-        time.sleep(8)
+        time.sleep(5)
         
         self.password = gen_password()
         log(f"Password: {self.password}")
@@ -201,7 +201,7 @@ class XiaomiAuto:
                 if btn.is_displayed() and "next" in btn.text.lower():
                     self.driver.execute_script("arguments[0].click();", btn)
                     log("Next clicked!")
-                    time.sleep(5)
+                    time.sleep(3)
                     return True
             return False
         except Exception as e:
@@ -239,7 +239,7 @@ class XiaomiAuto:
                         # Klik checkbox
                         self.driver.execute_script("arguments[0].click();", checkbox)
                         log("Checkbox clicked!")
-                        time.sleep(5)
+                        time.sleep(3)
                         
                         # Cek apakah solved
                         classes = checkbox.get_attribute("class") or ""
@@ -253,14 +253,14 @@ class XiaomiAuto:
                         
                         # Step 2: Jika muncul challenge, klik audio
                         log("Challenge appeared, trying audio...")
-                        time.sleep(2)
+                        time.sleep(1)
                         
                         # Cari challenge frame
                         for f in self.driver.find_elements(By.TAG_NAME, "iframe"):
                             s = f.get_attribute("src") or ""
                             if "recaptcha" in s.lower() and "bframe" in s.lower():
                                 self.driver.switch_to.frame(f)
-                                time.sleep(2)
+                                time.sleep(1)
                                 
                                 # Klik tombol audio
                                 audio_btn = None
@@ -275,7 +275,7 @@ class XiaomiAuto:
                                 if audio_btn:
                                     self.driver.execute_script("arguments[0].click();", audio_btn)
                                     log("Audio button clicked!")
-                                    time.sleep(3)
+                                    time.sleep(2)
                                     
                                     # Step 3: Dapatkan URL audio
                                     audio_url = None
@@ -341,7 +341,7 @@ class XiaomiAuto:
                                         clean_answer = re.sub(r'[^a-zA-Z0-9\s]', '', transcript).strip()
                                         answer_input.send_keys(clean_answer)
                                         log(f"Answer entered: {clean_answer}")
-                                        time.sleep(1)
+                                        time.sleep(0.5)
                                     except Exception as e:
                                         log(f"Input error: {e}")
                                         self.driver.switch_to.default_content()
@@ -352,7 +352,7 @@ class XiaomiAuto:
                                         verify_btn = self.driver.find_element(By.CSS_SELECTOR, "#recaptcha-verify-button")
                                         self.driver.execute_script("arguments[0].click();", verify_btn)
                                         log("Verify clicked!")
-                                        time.sleep(5)
+                                        time.sleep(3)
                                     except Exception as e:
                                         log(f"Verify error: {e}")
                                         self.driver.switch_to.default_content()
@@ -360,7 +360,7 @@ class XiaomiAuto:
                                     
                                     # Step 8: Cek apakah solved
                                     log("Checking if CAPTCHA solved...")
-                                    time.sleep(5)  # Tunggu lebih lama
+                                    time.sleep(2)
                                     
                                     # Method 1: Check via anchor frame
                                     solved = False
@@ -370,7 +370,7 @@ class XiaomiAuto:
                                             ss = ff.get_attribute("src") or ""
                                             if "recaptcha" in ss.lower() and "anchor" in ss.lower():
                                                 self.driver.switch_to.frame(ff)
-                                                time.sleep(1)
+                                                time.sleep(0.5)
                                                 try:
                                                     anc = self.driver.find_element(By.CSS_SELECTOR, "#recaptcha-anchor")
                                                     cls = anc.get_attribute("class") or ""
@@ -411,7 +411,7 @@ class XiaomiAuto:
                                         pass
                                     
                                     log("Not solved yet, retrying...")
-                                    time.sleep(3)
+                                    time.sleep(2)
                                     return False
                                 else:
                                     log("Audio button not found")
@@ -424,7 +424,7 @@ class XiaomiAuto:
                         self.driver.switch_to.default_content()
             
             log(f"Waiting for reCAPTCHA... ({attempt+1}/15)")
-            time.sleep(3)
+            time.sleep(2)
         
         log("reCAPTCHA not found")
         return False
@@ -439,7 +439,7 @@ class XiaomiAuto:
                     if any(w in text for w in ['sign up', 'register', 'create', 'submit', 'next']):
                         self.driver.execute_script("arguments[0].click();", btn)
                         log(f"Clicked: {btn.text}")
-                        time.sleep(10)
+                        time.sleep(3)
                         return True
             return False
         except Exception as e:
@@ -448,7 +448,7 @@ class XiaomiAuto:
     
     def enter_code(self, code):
         log(f"Entering code: {code}")
-        time.sleep(5)
+        time.sleep(2)
         self.driver.save_screenshot("xiaomi_verify.png")
         
         all_inputs = self.driver.find_elements(By.TAG_NAME, "input")
@@ -462,7 +462,7 @@ class XiaomiAuto:
                         inp.clear()
                         inp.send_keys(code)
                         log(f"Code entered!")
-                        time.sleep(1)
+                        time.sleep(0.5)
                         
                         # Submit
                         btns = self.driver.find_elements(By.TAG_NAME, "button")
@@ -472,7 +472,7 @@ class XiaomiAuto:
                                 if any(w in text for w in ['verify', 'submit', 'confirm', 'next', 'continue', 'ok']):
                                     self.driver.execute_script("arguments[0].click();", btn)
                                     log(f"Clicked: {btn.text}")
-                                    time.sleep(5)
+                                    time.sleep(3)
                                     return True
                         return True
             except:
@@ -481,7 +481,7 @@ class XiaomiAuto:
     
     def extract_session(self):
         log("Extracting session tokens...")
-        time.sleep(3)
+        time.sleep(1)
         
         cookies = self.driver.get_cookies()
         log(f"Cookies: {len(cookies)}")
@@ -524,7 +524,7 @@ class XiaomiAuto:
         """Accept Terms & Agreements on MiMo platform"""
         log("Navigating to MiMo platform...")
         self.driver.get("https://platform.xiaomimimo.com/")
-        time.sleep(8)
+        time.sleep(4)
         
         # Cek apakah ada Terms & Agreements popup
         try:
@@ -536,7 +536,7 @@ class XiaomiAuto:
             if checkbox and not checkbox.is_selected():
                 self.driver.execute_script("arguments[0].click();", checkbox)
                 log("Terms checkbox clicked!")
-                time.sleep(2)
+                time.sleep(1)
             
             # Klik Confirm button
             buttons = self.driver.find_elements(By.TAG_NAME, "button")
@@ -546,7 +546,7 @@ class XiaomiAuto:
                     if 'confirm' in text:
                         self.driver.execute_script("arguments[0].click();", btn)
                         log("Confirm clicked!")
-                        time.sleep(5)
+                        time.sleep(3)
                         return True
         except Exception as e:
             log(f"Terms accept error: {e}")
@@ -557,7 +557,7 @@ class XiaomiAuto:
         """Create API key on MiMo platform"""
         log("Navigating to API Keys page...")
         self.driver.get("https://platform.xiaomimimo.com/console/api-keys")
-        time.sleep(5)
+        time.sleep(3)
         
         # Click "Create API Key" button
         try:
@@ -568,7 +568,7 @@ class XiaomiAuto:
                     if 'create' in text and 'api' in text:
                         self.driver.execute_script("arguments[0].click();", btn)
                         log("Create API Key clicked!")
-                        time.sleep(3)
+                        time.sleep(2)
                         break
         except Exception as e:
             log(f"Create button error: {e}")
@@ -600,7 +600,7 @@ class XiaomiAuto:
                 name_input.clear()
                 name_input.send_keys(api_key_name)
                 log(f"API key name: {api_key_name}")
-                time.sleep(1)
+                time.sleep(0.5)
             else:
                 log("Could not find name input!")
                 self.driver.save_screenshot("api_key_input_debug.png")
@@ -618,7 +618,7 @@ class XiaomiAuto:
                     if 'confirm' in text:
                         self.driver.execute_script("arguments[0].click();", btn)
                         log("Confirm clicked!")
-                        time.sleep(5)
+                        time.sleep(3)
                         break
         except Exception as e:
             log(f"Confirm error: {e}")
@@ -627,7 +627,7 @@ class XiaomiAuto:
         # Copy API key
         try:
             # Wait for API key to appear
-            time.sleep(3)
+            time.sleep(2)
             
             api_key = None
             
