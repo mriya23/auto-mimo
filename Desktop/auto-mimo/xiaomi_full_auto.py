@@ -32,6 +32,13 @@ def gen_password():
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}")
 
+def timer_start():
+    return time.time()
+
+def timer_end(start, label):
+    elapsed = time.time() - start
+    log(f"[TIMER] {label}: {elapsed:.1f}s")
+
 class TempMailAPI:
     """Temp mail via tempmail.lol API"""
     
@@ -678,58 +685,82 @@ class XiaomiAuto:
     
     def run_single(self, model=None):
         """Create single account"""
+        t_total = timer_start()
         try:
             # Step 1: Create temp mail via API
+            t = timer_start()
             self.temp_mail = TempMailAPI()
             email = self.temp_mail.create_account()
+            timer_end(t, "Create email")
             if not email:
                 log("FATAL: Could not create temp email!")
                 return False
             
-            # Step 2: Setup browser TANPA extension (pakai Whisper langsung)
+            # Step 2: Setup browser
+            t = timer_start()
             self.setup_browser(with_extension=False)
+            timer_end(t, "Browser setup")
             self.temp_email = email
-            self.fill_form()
             
-            # Step 3: Click Next
+            # Step 3: Fill form
+            t = timer_start()
+            self.fill_form()
+            timer_end(t, "Fill form")
+            
+            # Step 4: Click Next
+            t = timer_start()
             next_clicked = self.click_next()
+            timer_end(t, "Click Next")
             if not next_clicked:
                 log("Next not found!")
                 return False
             
-            # Step 4: Solve CAPTCHA via audio
+            # Step 5: Solve CAPTCHA
+            t = timer_start()
             captcha = self.solve_recaptcha_audio(model)
+            timer_end(t, "Solve CAPTCHA")
             if not captcha:
-                log("Waiting 30s for CAPTCHA...")
-                time.sleep(30)
+                log("CAPTCHA failed!")
+                return False
             
-            # Step 5: Submit
+            # Step 6: Submit
+            t = timer_start()
             submitted = self.submit_final()
+            timer_end(t, "Submit")
             if not submitted:
                 log("Submit failed!")
                 return False
             
-            # Step 6: Wait for verification email via API
+            # Step 7: Wait email + enter code
+            t = timer_start()
             message = self.temp_mail.wait_for_message(keyword="xiaomi", timeout=90)
             code = self.temp_mail.extract_verification_code(message) if message else None
+            timer_end(t, "Wait email")
             
             if code:
+                t = timer_start()
                 self.enter_code(code)
+                timer_end(t, "Enter code")
                 time.sleep(3)
                 
-                # Step 7: Extract session tokens
+                # Step 8: Extract session
+                t = timer_start()
                 self.extract_session()
+                timer_end(t, "Extract session")
                 
-                # Step 8: Accept Terms on MiMo platform
-                log("Step 8: Accepting Terms...")
+                # Step 9: Accept Terms
+                t = timer_start()
+                log("Step 9: Accepting Terms...")
                 self.accept_terms()
+                timer_end(t, "Accept Terms")
                 
-                # Step 9: Create API Key
-                log("Step 9: Creating API Key...")
+                # Step 10: Create API Key
+                t = timer_start()
+                log("Step 10: Creating API Key...")
                 api_key = self.create_api_key()
+                timer_end(t, "Create API Key")
                 
                 if api_key:
-                    # Save API key
                     result = {
                         "email": self.temp_email,
                         "password": self.password,
@@ -739,6 +770,7 @@ class XiaomiAuto:
                         json.dump(result, f, indent=2)
                         f.write("\n")
                     
+                    timer_end(t_total, "TOTAL")
                     print("\n" + "="*60)
                     print(" API KEY CREATED!")
                     print("="*60)
@@ -748,6 +780,7 @@ class XiaomiAuto:
                     print("="*60)
                     return True
             
+            timer_end(t_total, "TOTAL (failed)")
             return False
             
         except Exception as e:
